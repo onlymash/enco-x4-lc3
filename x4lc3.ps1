@@ -1,5 +1,5 @@
 # x4lc3.ps1 — 管理一加 16 上 Enco X4 的双模 LC3 白名单与“常驻游戏态” (Windows PowerShell)
-# 原理与验证见 BLUETOOTH.md（方案 B / C）。需要 root（su）。
+# 原理与验证见 BLUETOOTH.md（方案 B / C）。白名单管理需 root（su），游戏态切换无需 root。
 $ErrorActionPreference = 'Stop'
 
 $CONF = "/data/misc/bluedroid/bt_oplus_iot_list.conf"
@@ -33,15 +33,15 @@ function Show-Usage {
     Write-Host @"
 用法: .\x4lc3.ps1 <命令> [参数]
 
-白名单（写入 $CONF，改动后需重启蓝牙才生效）:
+白名单（需 root，写入 $CONF，改动后需重启蓝牙才生效）:
   list                  显示自定义白名单与当前状态
   add <包名>...         添加应用（多个包名用空格分隔）并重启蓝牙
   del <包名>...         删除应用（多个包名用空格分隔）并重启蓝牙
   clear                 清空自定义白名单并重启蓝牙
   restart               仅重启蓝牙
 
-常驻游戏态（让所有声音走 LC3，包名须在白名单且已安装）:
-  on [包名]             开启；省略包名时使用白名单第一项
+常驻游戏态（无需 root，让所有声音走 LC3，包名须在白名单且已安装）:
+  on [包名]             开启；省略包名时使用自定义白名单第一项（需 root）
   off                   关闭，切回 LHDC/A2DP
   status                显示游戏态与当前活动设备
 

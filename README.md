@@ -7,7 +7,7 @@
 - 管理脚本（Windows）：[x4lc3.ps1](x4lc3.ps1) / [x4lc3.bat](x4lc3.bat)
 
 > [!WARNING]
-> 本项目需要 **root** 并修改系统蓝牙配置，属于非官方用法，使用风险自负。已在 **OnePlus 16（`PYB110_17.0.1.201`）+ Enco X4** 上验证，其他机型/固件版本未测试，类名与行为可能不同。脚本不修改任何系统 APK，可随时撤销。
+> 本项目修改系统设置或蓝牙配置，属于非官方用法，使用风险自负。已在 **OnePlus 16（`PYB110_17.0.1.201`）+ Enco X4** 上验证，其他机型/固件版本未测试，类名与行为可能不同。脚本不修改任何系统 APK，可随时撤销。
 
 ## 原理简述
 
@@ -15,17 +15,20 @@ X4 向手机上报“支持 LE Audio 共存”，系统因此将其按 **BR/EDR 
 
 已验证结论：
 
-| 方案 | 结果 |
-|---|---|
-| 自定义白名单（写入 `add_list`） | ✅ 打开白名单应用后自动切换到 LC3 |
-| 伪造常驻游戏态（`debug_gamemode_*`） | ✅ LE Audio 成为活动设备，所有声音走 LC3 |
-| 关闭共存开关，让 X4 按 X3 方式工作 | ❌ 不可行：X4 每次连接都会重新上报共存标记 |
+| 方案 | 是否需要 root | 结果 |
+|---|---|---|
+| 自定义白名单（写入 `add_list`） | 需要 | ✅ 打开白名单应用后自动切换到 LC3 |
+| 伪造常驻游戏态（`debug_gamemode_*`） | 不需要（配合系统内置白名单包名时） | ✅ LE Audio 成为活动设备，所有声音走 LC3 |
+| 关闭共存开关，让 X4 按 X3 方式工作 | — | ❌ 不可行：X4 每次连接都会重新上报共存标记 |
 
 ## 前提
 
-- 已 root（需要 `su`），已开启 USB 调试并授权 adb。
+- 已开启 USB 调试并授权 adb。
 - 电脑上有 `adb`（Android platform-tools）。脚本按以下顺序查找：环境变量 `ADB` → `PATH` → `$ANDROID_HOME` / `$ANDROID_SDK_ROOT` 下的 `platform-tools`。找不到会报错退出。
-- 设备上**至少安装一个白名单应用**（内置白名单或你添加的），否则系统不会建立 LE Audio 双连接。
+- 设备上**至少安装一个白名单应用**（系统内置白名单或自定义白名单），否则系统不会建立 LE Audio 双连接。
+- **Root 权限要求**：
+  - **不需要 root**：`on <包名>`（显式指定包名开启常驻游戏态）、`off`（关闭常驻游戏态）、`status`（查看当前状态）。若设备上已安装系统内置白名单中的游戏（如王者荣耀 `com.tencent.tmgp.sgame`、和平精英 `com.tencent.tmgp.pubgmhd` 等，完整列表见 [BLUETOOTH.md](BLUETOOTH.md) 第 3.2 节），无需 root 即可直接使用 `on <包名>` / `off` 切换全局 LC3。
+  - **需要 root（`su`）**：`list`、`add`、`del`、`clear`、`restart`，以及省略包名的 `on`（因为读写 `/data/misc/bluedroid/bt_oplus_iot_list.conf` 与重启蓝牙需要 root 权限）。
 
 ## 用法
 
@@ -36,12 +39,14 @@ X4 向手机上报“支持 LE Audio 共存”，系统因此将其按 **BR/EDR 
 ```bash
 chmod +x x4lc3.sh
 
+# 白名单管理（需要 root）
 ./x4lc3.sh list                                 # 查看自定义白名单与当前状态
 ./x4lc3.sh add com.example.a com.example.b      # 添加应用（多个包名用空格分隔），并重启蓝牙
 ./x4lc3.sh del com.example.a com.example.b      # 删除应用（多个包名用空格分隔），并重启蓝牙
 ./x4lc3.sh clear                                # 清空自定义白名单
 ./x4lc3.sh restart                              # 仅重启蓝牙
 
+# 常驻游戏态与状态查询（指定包名时无需 root；省略包名需 root 读取自定义白名单首项）
 ./x4lc3.sh on [包名]                            # 开启常驻游戏态（全局 LC3）
 ./x4lc3.sh off                                  # 关闭，切回 LHDC / A2DP
 ./x4lc3.sh status                               # 游戏态与最近的活动设备切换
@@ -52,12 +57,14 @@ chmod +x x4lc3.sh
 可以直接使用 `x4lc3.bat`（自动绕过 PowerShell 执行策略限制）或在 PowerShell 中运行 `.\x4lc3.ps1`：
 
 ```powershell
+# 白名单管理（需要 root）
 .\x4lc3.bat list                                # 查看自定义白名单与当前状态
 .\x4lc3.bat add com.example.a com.example.b     # 添加应用（多个包名用空格分隔），并重启蓝牙
 .\x4lc3.bat del com.example.a com.example.b     # 删除应用（多个包名用空格分隔），并重启蓝牙
 .\x4lc3.bat clear                               # 清空自定义白名单
 .\x4lc3.bat restart                             # 仅重启蓝牙
 
+# 常驻游戏态与状态查询（指定包名时无需 root；省略包名需 root 读取自定义白名单首项）
 .\x4lc3.bat on [包名]                           # 开启常驻游戏态（全局 LC3）
 .\x4lc3.bat off                                 # 关闭，切回 LHDC / A2DP
 .\x4lc3.bat status                              # 游戏态与最近的活动设备切换
@@ -73,7 +80,11 @@ chmod +x x4lc3.sh
 ### 典型流程
 
 ```bash
-# 1. 把已安装的应用加入白名单（可一次添加多个，用空格分隔；会重启蓝牙，耳机自动重连）
+# 方式一（无 root）：设备上已安装系统内置白名单应用（如王者荣耀），直接开启全局 LC3
+./x4lc3.sh on com.tencent.tmgp.sgame
+./x4lc3.sh off      # 用完切回
+
+# 方式二（需 root）：把任意已安装应用加入自定义白名单（重启蓝牙后生效）
 ./x4lc3.sh add com.miHoYo.GenshinImpact com.miHoYo.hkrpg
 
 # 2a. 直接打开该应用：系统识别为游戏后自动切到 LC3
