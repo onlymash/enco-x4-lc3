@@ -1,0 +1,7 @@
+# 反编译输出与从设备提取的系统文件（含固件内容与设备数据，不应发布）
+jadx_*/
+extracted/
+
+# 内部草稿
+BLUETOOTH.gemini-draft.md
+
