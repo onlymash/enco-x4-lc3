@@ -50,16 +50,20 @@ function Show-Usage {
 "@
 }
 
-function Invoke-RootShell([string]$Command) {
+function Invoke-AdbShell([string]$Command) {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $out = & $ADB shell "su -c '$Command'" 2>$null
+        $out = & $ADB shell $Command 2>$null
         if ($null -eq $out) { return "" }
         return ($out -join "`n").Replace("`r", "").TrimEnd("`n")
     } finally {
         $ErrorActionPreference = $prev
     }
+}
+
+function Invoke-RootShell([string]$Command) {
+    return Invoke-AdbShell "su -c '$Command'"
 }
 
 function Test-Device {
@@ -74,8 +78,14 @@ function Test-Device {
     } finally {
         $ErrorActionPreference = $prev
     }
-    $uid = (Invoke-RootShell "id -u").Trim()
-    if ($uid -ne "0") {
+}
+
+function Test-HasRoot {
+    return ((Invoke-RootShell "id -u").Trim() -eq "0")
+}
+
+function Assert-Root {
+    if (-not (Test-HasRoot)) {
         Write-Host "无法获取 root" -ForegroundColor Red
         exit 1
     }
@@ -145,16 +155,16 @@ function Invoke-MaybeRestart {
 }
 
 function Test-PackageInstalled([string]$Pkg) {
-    $out = Invoke-RootShell "pm list packages $Pkg"
+    $out = Invoke-AdbShell "pm list packages $Pkg"
     $lines = $out -split "`n" | ForEach-Object { $_.Trim() }
     return ($lines -contains "package:$Pkg")
 }
 
 function Show-Status {
-    $val = Invoke-RootShell "settings get global debug_gamemode_value"
-    $pkg = Invoke-RootShell "settings get global debug_gamemode_savegame"
-    $pref = Invoke-RootShell "settings get global oplus_games_low_latency_state"
-    $coex = Invoke-RootShell "getprop persist.sys.bt.leacoexist"
+    $val = Invoke-AdbShell "settings get global debug_gamemode_value"
+    $pkg = Invoke-AdbShell "settings get global debug_gamemode_savegame"
+    $pref = Invoke-AdbShell "settings get global oplus_games_low_latency_state"
+    $coex = Invoke-AdbShell "getprop persist.sys.bt.leacoexist"
     Write-Host "游戏态: value=$val, package=$pkg, user_prefer=$pref"
     Write-Host "共存开关 persist.sys.bt.leacoexist=$coex"
     Write-Host "最近的活动设备切换:"
@@ -174,6 +184,7 @@ function Show-Status {
 }
 
 function Show-List {
+    Assert-Root
     Write-Host "自定义白名单 ($CONF):"
     $list = Get-Whitelist
     foreach ($item in $list) {
@@ -186,6 +197,7 @@ function Show-List {
 
 function Add-Packages([string[]]$NewPkgs) {
     if (-not $NewPkgs -or $NewPkgs.Count -eq 0) { Show-Usage; exit 1 }
+    Assert-Root
     Initialize-Conf
     $cur = [System.Collections.Generic.List[string]]::new()
     foreach ($i in (Get-Whitelist)) { $cur.Add($i) }
@@ -203,6 +215,7 @@ function Add-Packages([string[]]$NewPkgs) {
 
 function Remove-Packages([string[]]$DelPkgs) {
     if (-not $DelPkgs -or $DelPkgs.Count -eq 0) { Show-Usage; exit 1 }
+    Assert-Root
     Initialize-Conf
     $cur = Get-Whitelist | Where-Object { $DelPkgs -notcontains $_ }
     Set-Whitelist @($cur)
@@ -210,31 +223,34 @@ function Remove-Packages([string[]]$DelPkgs) {
 }
 
 function Enable-GameMode([string]$Pkg) {
-    $list = Get-Whitelist
     if ([string]::IsNullOrWhiteSpace($Pkg)) {
+        Assert-Root
+        $list = Get-Whitelist
         if ($list.Count -gt 0) { $Pkg = $list[0] }
-    }
-    if ([string]::IsNullOrWhiteSpace($Pkg)) {
-        Write-Host "白名单为空，请先 add 或指定包名" -ForegroundColor Red
-        exit 1
-    }
-    if ($list -notcontains $Pkg) {
-        Write-Host "警告: $Pkg 不在自定义白名单，若不在系统内置名单中将不会生效" -ForegroundColor Yellow
+        if ([string]::IsNullOrWhiteSpace($Pkg)) {
+            Write-Host "白名单为空，请先 add 或指定包名" -ForegroundColor Red
+            exit 1
+        }
+    } elseif (Test-HasRoot) {
+        $list = Get-Whitelist
+        if ($list -notcontains $Pkg) {
+            Write-Host "警告: $Pkg 不在自定义白名单，若不在系统内置名单中将不会生效" -ForegroundColor Yellow
+        }
     }
     if (-not (Test-PackageInstalled $Pkg)) {
         Write-Host "警告: $Pkg 未安装，需至少安装一个白名单应用才会启用双连接" -ForegroundColor Yellow
     }
-    $null = Invoke-RootShell "settings put global debug_gamemode_savegame $Pkg"
-    $prop = Invoke-RootShell "getprop ro.oplus.audio.support.low_latency_game"
+    $null = Invoke-AdbShell "settings put global debug_gamemode_savegame $Pkg"
+    $prop = Invoke-AdbShell "getprop ro.oplus.audio.support.low_latency_game"
     if ($prop -eq "true") {
-        $null = Invoke-RootShell "settings put global oplus_games_low_latency_state ${Pkg}:1"
+        $null = Invoke-AdbShell "settings put global oplus_games_low_latency_state ${Pkg}:1"
     }
-    $null = Invoke-RootShell "settings put global debug_gamemode_value 1"
+    $null = Invoke-AdbShell "settings put global debug_gamemode_value 1"
     Write-Host "已开启常驻游戏态: $Pkg"
 }
 
 function Disable-GameMode {
-    $null = Invoke-RootShell "settings put global debug_gamemode_value 0"
+    $null = Invoke-AdbShell "settings put global debug_gamemode_value 0"
     Write-Host "已关闭常驻游戏态"
 }
 
@@ -251,8 +267,8 @@ switch ($cmd) {
     "list"    { Show-List }
     "add"     { Add-Packages $rest }
     { $_ -in @("del", "rm", "remove") } { Remove-Packages $rest }
-    "clear"   { Set-Whitelist @(); Invoke-MaybeRestart }
-    "restart" { Restart-Bt }
+    "clear"   { Assert-Root; Set-Whitelist @(); Invoke-MaybeRestart }
+    "restart" { Assert-Root; Restart-Bt }
     "on"      { Enable-GameMode ($rest | Select-Object -First 1) }
     "off"     { Disable-GameMode }
     "status"  { Show-Status }

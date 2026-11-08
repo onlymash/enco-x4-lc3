@@ -43,12 +43,15 @@ usage() {
 EOF
 }
 
+ash() { "$ADB" shell "$1"; }
 rsh() { "$ADB" shell "su -c '$1'"; }
 
 check_device() {
   "$ADB" get-state >/dev/null 2>&1 || { echo "未检测到 adb 设备" >&2; exit 1; }
-  rsh 'id -u' | tr -d '\r' | grep -qx 0 || { echo "无法获取 root" >&2; exit 1; }
 }
+
+has_root() { rsh 'id -u' 2>/dev/null | tr -d '\r' | grep -qx 0; }
+check_root() { has_root || { echo "无法获取 root" >&2; exit 1; }; }
 
 # 默认系统不存在 $CONF，若不存在则先创建并设置权限与 SELinux 上下文
 ensure_conf() {
@@ -101,9 +104,10 @@ restart_bt() {
 
 maybe_restart() { [ "${NO_RESTART:-0}" = 1 ] && echo "已跳过重启，改动需重启蓝牙后生效" || restart_bt; }
 
-installed() { rsh "pm list packages $1" | tr -d '\r' | grep -qx "package:$1"; }
+installed() { ash "pm list packages $1" | tr -d '\r' | grep -qx "package:$1"; }
 
 cmd_list() {
+  check_root
   echo "自定义白名单 ($CONF):"
   read_list | sed 's/^/  /'
   echo "（系统内置白名单见 BLUETOOTH.md 第 3.2 节）"
@@ -113,6 +117,7 @@ cmd_list() {
 
 cmd_add() {
   [ $# -ge 1 ] || { usage; exit 1; }
+  check_root
   ensure_conf
   local cur new p
   cur="$(read_list)"
@@ -127,6 +132,7 @@ cmd_add() {
 
 cmd_del() {
   [ $# -ge 1 ] || { usage; exit 1; }
+  check_root
   ensure_conf
   local cur p
   cur="$(read_list)"
@@ -137,45 +143,51 @@ cmd_del() {
 
 cmd_on() {
   local pkg="${1:-}"
-  [ -n "$pkg" ] || pkg="$(read_list | head -n1 || true)"
-  [ -n "$pkg" ] || { echo "白名单为空，请先 add 或指定包名" >&2; exit 1; }
-  read_list | grep -qxF "$pkg" || echo "警告: $pkg 不在自定义白名单，若不在系统内置名单中将不会生效" >&2
-  installed "$pkg" || echo "警告: $pkg 未安装，需至少安装一个白名单应用才会启用双连接" >&2
-  rsh "settings put global debug_gamemode_savegame $pkg"
-  # 开启“用户偏好低延迟”的机型需要 <包名>:1，否则 isUserPreferLLMode() 为假
-  if [ "$(rsh 'getprop ro.oplus.audio.support.low_latency_game' | tr -d '\r')" = true ]; then
-    rsh "settings put global oplus_games_low_latency_state $pkg:1"
+  if [ -z "$pkg" ]; then
+    check_root
+    pkg="$(read_list | head -n1 || true)"
+    [ -n "$pkg" ] || { echo "白名单为空，请先 add 或指定包名" >&2; exit 1; }
+  elif has_root; then
+    read_list | grep -qxF "$pkg" || echo "警告: $pkg 不在自定义白名单，若不在系统内置名单中将不会生效" >&2
   fi
-  rsh 'settings put global debug_gamemode_value 1'
+  installed "$pkg" || echo "警告: $pkg 未安装，需至少安装一个白名单应用才会启用双连接" >&2
+  ash "settings put global debug_gamemode_savegame $pkg"
+  # 开启“用户偏好低延迟”的机型需要 <包名>:1，否则 isUserPreferLLMode() 为假
+  if [ "$(ash 'getprop ro.oplus.audio.support.low_latency_game' | tr -d '\r')" = true ]; then
+    ash "settings put global oplus_games_low_latency_state $pkg:1"
+  fi
+  ash 'settings put global debug_gamemode_value 1'
   echo "已开启常驻游戏态: $pkg"
 }
 
 cmd_off() {
-  rsh 'settings put global debug_gamemode_value 0'
+  ash 'settings put global debug_gamemode_value 0'
   echo "已关闭常驻游戏态"
 }
 
 cmd_status() {
-  echo "游戏态: value=$(rsh 'settings get global debug_gamemode_value' | tr -d '\r')," \
-       "package=$(rsh 'settings get global debug_gamemode_savegame' | tr -d '\r')," \
-       "user_prefer=$(rsh 'settings get global oplus_games_low_latency_state' | tr -d '\r')"
-  echo "共存开关 persist.sys.bt.leacoexist=$(rsh 'getprop persist.sys.bt.leacoexist' | tr -d '\r')"
+  echo "游戏态: value=$(ash 'settings get global debug_gamemode_value' | tr -d '\r')," \
+       "package=$(ash 'settings get global debug_gamemode_savegame' | tr -d '\r')," \
+       "user_prefer=$(ash 'settings get global oplus_games_low_latency_state' | tr -d '\r')"
+  echo "共存开关 persist.sys.bt.leacoexist=$(ash 'getprop persist.sys.bt.leacoexist' | tr -d '\r')"
   echo "最近的活动设备切换:"
-  "$ADB" shell "dumpsys bluetooth_manager" | tr -d '\r' | grep -a "Active Device Changed" | tail -n 4 | sed 's/^ */  /' || true
+  ash "dumpsys bluetooth_manager" | tr -d '\r' | grep -a "Active Device Changed" | tail -n 4 | sed 's/^ */  /' || true
 }
 
 [ $# -ge 1 ] || { usage; exit 1; }
-check_device
 c="$1"; shift
+case "$c" in
+  -h|--help|help) usage; exit 0 ;;
+esac
+check_device
 case "$c" in
   list) cmd_list ;;
   add) cmd_add "$@" ;;
   del|rm|remove) cmd_del "$@" ;;
-  clear) : | write_list; maybe_restart ;;
-  restart) restart_bt ;;
+  clear) check_root; : | write_list; maybe_restart ;;
+  restart) check_root; restart_bt ;;
   on) cmd_on "$@" ;;
   off) cmd_off ;;
   status) cmd_status ;;
-  -h|--help|help) usage ;;
   *) usage; exit 1 ;;
 esac

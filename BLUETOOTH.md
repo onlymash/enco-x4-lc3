@@ -139,12 +139,11 @@ adb logcat -d | grep -i OplusDualModeHelper
 ### 方案 C：伪造常驻游戏态（保留共存，✅ 已验证）
 
 ```bash
-# 启用
-adb shell su -c '
-  settings put global debug_gamemode_savegame com.tencent.tmgp.sgame
-  settings put global debug_gamemode_value 1'
+# 启用（无需 root）
+adb shell settings put global debug_gamemode_savegame com.tencent.tmgp.sgame
+adb shell settings put global debug_gamemode_value 1
 # 关闭
-adb shell su -c 'settings put global debug_gamemode_value 0'
+adb shell settings put global debug_gamemode_value 0
 ```
 
 实测（需先按方案 B 把 `com.miHoYo.GenshinImpact` 加入 `add_list` 并重启蓝牙，`savegame` 取该包名）：设置后 `ActiveDeviceManager` 记录 `Active Device Changed: X4 for profile: LE_AUDIO`，A2DP/HEADSET 活动设备变为 null，ASE 配置选中 `Lc3_32_2 ... Low_Latency`；原 codec 为 LHDC。此时所有应用声音均走 LC3。
