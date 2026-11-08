@@ -11,7 +11,7 @@ function Find-Adb {
         if (Test-Path -LiteralPath $env:ADB) { return $env:ADB }
         $cmd = Get-Command $env:ADB -ErrorAction SilentlyContinue
         if ($cmd) { return $cmd.Source }
-        Write-Error "指定的 ADB 不可执行: $env:ADB"
+        Write-Host "指定的 ADB 不可执行: $env:ADB" -ForegroundColor Red
         exit 1
     }
     $cmd = Get-Command adb -ErrorAction SilentlyContinue
@@ -35,8 +35,8 @@ function Show-Usage {
 
 白名单（写入 $CONF，改动后需重启蓝牙才生效）:
   list                  显示自定义白名单与当前状态
-  add <包名>...         添加应用（可多个）并重启蓝牙
-  del <包名>...         删除应用并重启蓝牙
+  add <包名>...         添加应用（多个包名用空格分隔）并重启蓝牙
+  del <包名>...         删除应用（多个包名用空格分隔）并重启蓝牙
   clear                 清空自定义白名单并重启蓝牙
   restart               仅重启蓝牙
 
@@ -51,16 +51,28 @@ function Show-Usage {
 }
 
 function Invoke-RootShell([string]$Command) {
-    $out = & $ADB shell "su -c '$Command'" 2>$null
-    if ($null -eq $out) { return "" }
-    return ($out -join "`n").Replace("`r", "").TrimEnd("`n")
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = & $ADB shell "su -c '$Command'" 2>$null
+        if ($null -eq $out) { return "" }
+        return ($out -join "`n").Replace("`r", "").TrimEnd("`n")
+    } finally {
+        $ErrorActionPreference = $prev
+    }
 }
 
 function Test-Device {
-    $null = & $ADB get-state 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "未检测到 adb 设备" -ForegroundColor Red
-        exit 1
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $null = & $ADB get-state 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "未检测到 adb 设备" -ForegroundColor Red
+            exit 1
+        }
+    } finally {
+        $ErrorActionPreference = $prev
     }
     $uid = (Invoke-RootShell "id -u").Trim()
     if ($uid -ne "0") {
@@ -69,8 +81,14 @@ function Test-Device {
     }
 }
 
+# 默认系统不存在 $CONF，若不存在则先创建并设置权限与 SELinux 上下文
+function Initialize-Conf {
+    $cmd = "if [ ! -f $CONF ]; then printf '[%s]\n' '$SECTION' > $CONF && chown bluetooth:bluetooth $CONF && chmod 660 $CONF && (restorecon $CONF >/dev/null 2>&1 || true); fi"
+    $null = Invoke-RootShell $cmd
+}
+
 function Get-Whitelist {
-    $content = Invoke-RootShell "cat $CONF 2>/dev/null"
+    $content = Invoke-RootShell "if [ -f $CONF ]; then cat $CONF; fi"
     if ([string]::IsNullOrWhiteSpace($content)) { return @() }
     $inSec = $false
     $list = @()
@@ -95,24 +113,18 @@ function Get-Whitelist {
 }
 
 function Set-Whitelist([string[]]$Packages) {
+    Initialize-Conf
     $valid = @($Packages | Where-Object { $_ -and $_.Trim() -ne "" })
     if ($valid.Count -eq 0) {
-        $null = Invoke-RootShell "rm -f $CONF"
-        Write-Host "白名单已清空（配置文件已删除）"
+        $cmd = "cat > $CONF <<EOF`n[$SECTION]`nEOF`nchown bluetooth:bluetooth $CONF && chmod 660 $CONF && (restorecon $CONF >/dev/null 2>&1 || true)"
+        $null = Invoke-RootShell $cmd
+        Write-Host "白名单已清空"
         return
     }
     $joined = $valid -join ","
-    $tmpFile = [System.IO.Path]::GetTempFileName()
-    try {
-        $text = "[$SECTION]`n$KEY=$joined`n"
-        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-        [System.IO.File]::WriteAllText($tmpFile, $text, $utf8NoBom)
-        $null = & $ADB push $tmpFile /data/local/tmp/bt_oplus_iot_list.conf 2>$null
-        $null = Invoke-RootShell "cp /data/local/tmp/bt_oplus_iot_list.conf $CONF && chown bluetooth:bluetooth $CONF && chmod 660 $CONF; restorecon $CONF >/dev/null 2>&1; rm /data/local/tmp/bt_oplus_iot_list.conf"
-        Write-Host "白名单: $joined"
-    } finally {
-        Remove-Item -LiteralPath $tmpFile -Force -ErrorAction SilentlyContinue
-    }
+    $cmd = "cat > $CONF <<EOF`n[$SECTION]`n$KEY=$joined`nEOF`nchown bluetooth:bluetooth $CONF && chmod 660 $CONF && (restorecon $CONF >/dev/null 2>&1 || true)"
+    $null = Invoke-RootShell $cmd
+    Write-Host "白名单: $joined"
 }
 
 function Restart-Bt {
@@ -146,7 +158,13 @@ function Show-Status {
     Write-Host "游戏态: value=$val, package=$pkg, user_prefer=$pref"
     Write-Host "共存开关 persist.sys.bt.leacoexist=$coex"
     Write-Host "最近的活动设备切换:"
-    $dump = & $ADB shell "dumpsys bluetooth_manager" 2>$null
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $dump = & $ADB shell "dumpsys bluetooth_manager" 2>$null
+    } finally {
+        $ErrorActionPreference = $prev
+    }
     if ($dump) {
         $matches = $dump | Select-String -Pattern "Active Device Changed" | Select-Object -Last 4
         foreach ($m in $matches) {
@@ -168,6 +186,7 @@ function Show-List {
 
 function Add-Packages([string[]]$NewPkgs) {
     if (-not $NewPkgs -or $NewPkgs.Count -eq 0) { Show-Usage; exit 1 }
+    Initialize-Conf
     $cur = [System.Collections.Generic.List[string]]::new()
     foreach ($i in (Get-Whitelist)) { $cur.Add($i) }
     foreach ($p in $NewPkgs) {
@@ -184,6 +203,7 @@ function Add-Packages([string[]]$NewPkgs) {
 
 function Remove-Packages([string[]]$DelPkgs) {
     if (-not $DelPkgs -or $DelPkgs.Count -eq 0) { Show-Usage; exit 1 }
+    Initialize-Conf
     $cur = Get-Whitelist | Where-Object { $DelPkgs -notcontains $_ }
     Set-Whitelist @($cur)
     Invoke-MaybeRestart
@@ -238,4 +258,3 @@ switch ($cmd) {
     "status"  { Show-Status }
     default   { Show-Usage; exit 1 }
 }
-

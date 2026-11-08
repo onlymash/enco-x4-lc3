@@ -21,8 +21,6 @@ ADB="$(find_adb)" || exit 1
 CONF=/data/misc/bluedroid/bt_oplus_iot_list.conf
 SECTION=dualmode_a2dp_lowlatency
 KEY=add_list
-TMP_LOCAL="$(mktemp)"
-trap 'rm -f "$TMP_LOCAL"' EXIT
 
 usage() {
   cat <<EOF
@@ -30,8 +28,8 @@ usage() {
 
 白名单（写入 $CONF，改动后需重启蓝牙才生效）:
   list                  显示自定义白名单与当前状态
-  add <包名>...         添加应用（可多个）并重启蓝牙
-  del <包名>...         删除应用并重启蓝牙
+  add <包名>...         添加应用（多个包名用空格分隔）并重启蓝牙
+  del <包名>...         删除应用（多个包名用空格分隔）并重启蓝牙
   clear                 清空自定义白名单并重启蓝牙
   restart               仅重启蓝牙
 
@@ -52,25 +50,45 @@ check_device() {
   rsh 'id -u' | tr -d '\r' | grep -qx 0 || { echo "无法获取 root" >&2; exit 1; }
 }
 
+# 默认系统不存在 $CONF，若不存在则先创建并设置权限与 SELinux 上下文
+ensure_conf() {
+  rsh "if [ ! -f $CONF ]; then
+    printf '[%s]\n' '$SECTION' > $CONF
+    chown bluetooth:bluetooth $CONF
+    chmod 660 $CONF
+    restorecon $CONF >/dev/null 2>&1 || true
+  fi"
+}
+
 # 读取当前 add_list，逐行输出
 read_list() {
-  rsh "cat $CONF 2>/dev/null" | tr -d '\r' | awk -F= -v s="[$SECTION]" -v k="$KEY" '
+  rsh "if [ -f $CONF ]; then cat $CONF; fi" | tr -d '\r' | awk -F= -v s="[$SECTION]" -v k="$KEY" '
     /^\[/ { insec = ($0 == s); next }
     insec { gsub(/[ \t]/, "", $1); if ($1 == k) { gsub(/[ \t]/, "", $2); n = split($2, a, ","); for (i = 1; i <= n; i++) if (a[i] != "") print a[i] } }'
 }
 
-# 将标准输入的包名列表写回配置文件
+# 将标准输入的包名列表写回配置文件（若文件不存在则先创建）
 write_list() {
   local joined
   joined="$(paste -sd, - || true)"
+  ensure_conf
   if [ -z "$joined" ]; then
-    rsh "rm -f $CONF"
-    echo "白名单已清空（配置文件已删除）"
+    rsh "cat > $CONF <<EOF
+[$SECTION]
+EOF
+chown bluetooth:bluetooth $CONF
+chmod 660 $CONF
+restorecon $CONF >/dev/null 2>&1 || true"
+    echo "白名单已清空"
     return
   fi
-  printf '[%s]\n%s=%s\n' "$SECTION" "$KEY" "$joined" >"$TMP_LOCAL"
-  "$ADB" push "$TMP_LOCAL" /data/local/tmp/bt_oplus_iot_list.conf >/dev/null
-  rsh "cp /data/local/tmp/bt_oplus_iot_list.conf $CONF && chown bluetooth:bluetooth $CONF && chmod 660 $CONF; restorecon $CONF >/dev/null 2>&1; rm /data/local/tmp/bt_oplus_iot_list.conf"
+  rsh "cat > $CONF <<EOF
+[$SECTION]
+$KEY=$joined
+EOF
+chown bluetooth:bluetooth $CONF
+chmod 660 $CONF
+restorecon $CONF >/dev/null 2>&1 || true"
   echo "白名单: $joined"
 }
 
@@ -95,6 +113,7 @@ cmd_list() {
 
 cmd_add() {
   [ $# -ge 1 ] || { usage; exit 1; }
+  ensure_conf
   local cur new p
   cur="$(read_list)"
   new="$cur"
@@ -108,6 +127,7 @@ cmd_add() {
 
 cmd_del() {
   [ $# -ge 1 ] || { usage; exit 1; }
+  ensure_conf
   local cur p
   cur="$(read_list)"
   for p in "$@"; do cur="$(printf '%s\n' "$cur" | grep -vxF "$p" || true)"; done
@@ -117,7 +137,7 @@ cmd_del() {
 
 cmd_on() {
   local pkg="${1:-}"
-  [ -n "$pkg" ] || pkg="$(read_list | head -n1)"
+  [ -n "$pkg" ] || pkg="$(read_list | head -n1 || true)"
   [ -n "$pkg" ] || { echo "白名单为空，请先 add 或指定包名" >&2; exit 1; }
   read_list | grep -qxF "$pkg" || echo "警告: $pkg 不在自定义白名单，若不在系统内置名单中将不会生效" >&2
   installed "$pkg" || echo "警告: $pkg 未安装，需至少安装一个白名单应用才会启用双连接" >&2

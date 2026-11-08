@@ -29,20 +29,22 @@ X4 向手机上报“支持 LE Audio 共存”，系统因此将其按 **BR/EDR 
 
 ## 用法
 
+> 一次添加或删除多个应用时，多个包名之间使用**空格**分隔（脚本写入配置文件时会自动转为逗号分隔）。
+
 ### Linux / macOS
 
 ```bash
 chmod +x x4lc3.sh
 
-./x4lc3.sh list                    # 查看自定义白名单与当前状态
-./x4lc3.sh add com.example.game    # 添加应用（可多个），并重启蓝牙
-./x4lc3.sh del com.example.game    # 删除应用，并重启蓝牙
-./x4lc3.sh clear                   # 清空自定义白名单
-./x4lc3.sh restart                 # 仅重启蓝牙
+./x4lc3.sh list                                 # 查看自定义白名单与当前状态
+./x4lc3.sh add com.example.a com.example.b      # 添加应用（多个包名用空格分隔），并重启蓝牙
+./x4lc3.sh del com.example.a com.example.b      # 删除应用（多个包名用空格分隔），并重启蓝牙
+./x4lc3.sh clear                                # 清空自定义白名单
+./x4lc3.sh restart                              # 仅重启蓝牙
 
-./x4lc3.sh on [包名]               # 开启常驻游戏态（全局 LC3）
-./x4lc3.sh off                     # 关闭，切回 LHDC / A2DP
-./x4lc3.sh status                  # 游戏态与最近的活动设备切换
+./x4lc3.sh on [包名]                            # 开启常驻游戏态（全局 LC3）
+./x4lc3.sh off                                  # 关闭，切回 LHDC / A2DP
+./x4lc3.sh status                               # 游戏态与最近的活动设备切换
 ```
 
 ### Windows (PowerShell / CMD)
@@ -50,15 +52,15 @@ chmod +x x4lc3.sh
 可以直接使用 `x4lc3.bat`（自动绕过 PowerShell 执行策略限制）或在 PowerShell 中运行 `.\x4lc3.ps1`：
 
 ```powershell
-.\x4lc3.bat list                    # 查看自定义白名单与当前状态
-.\x4lc3.bat add com.example.game    # 添加应用（可多个），并重启蓝牙
-.\x4lc3.bat del com.example.game    # 删除应用，并重启蓝牙
-.\x4lc3.bat clear                   # 清空自定义白名单
-.\x4lc3.bat restart                 # 仅重启蓝牙
+.\x4lc3.bat list                                # 查看自定义白名单与当前状态
+.\x4lc3.bat add com.example.a com.example.b     # 添加应用（多个包名用空格分隔），并重启蓝牙
+.\x4lc3.bat del com.example.a com.example.b     # 删除应用（多个包名用空格分隔），并重启蓝牙
+.\x4lc3.bat clear                               # 清空自定义白名单
+.\x4lc3.bat restart                             # 仅重启蓝牙
 
-.\x4lc3.bat on [包名]               # 开启常驻游戏态（全局 LC3）
-.\x4lc3.bat off                     # 关闭，切回 LHDC / A2DP
-.\x4lc3.bat status                  # 游戏态与最近的活动设备切换
+.\x4lc3.bat on [包名]                           # 开启常驻游戏态（全局 LC3）
+.\x4lc3.bat off                                 # 关闭，切回 LHDC / A2DP
+.\x4lc3.bat status                              # 游戏态与最近的活动设备切换
 ```
 
 环境变量：
@@ -71,8 +73,8 @@ chmod +x x4lc3.sh
 ### 典型流程
 
 ```bash
-# 1. 把一个已安装的应用加入白名单（会重启蓝牙，耳机自动重连）
-./x4lc3.sh add com.miHoYo.GenshinImpact
+# 1. 把已安装的应用加入白名单（可一次添加多个，用空格分隔；会重启蓝牙，耳机自动重连）
+./x4lc3.sh add com.miHoYo.GenshinImpact com.miHoYo.hkrpg
 
 # 2a. 直接打开该应用：系统识别为游戏后自动切到 LC3
 # 2b. 或让 LC3 常驻（所有应用的声音都走 LC3）：
