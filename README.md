@@ -3,7 +3,8 @@
 在 OnePlus（ColorOS 17）手机上，OPPO Enco X3 可以全局使用 LC3 / LE Audio，而 Enco X4 被限制为**仅在白名单游戏运行时**才切到 LC3。本项目分析了该限制的实现，并提供一个脚本，用来自定义白名单、随时手动切换 LC3。
 
 - 原理分析与实测记录：[BLUETOOTH.md](BLUETOOTH.md)
-- 管理脚本：[x4lc3.sh](x4lc3.sh)
+- 管理脚本（Linux / macOS）：[x4lc3.sh](x4lc3.sh)
+- 管理脚本（Windows）：[x4lc3.ps1](x4lc3.ps1) / [x4lc3.bat](x4lc3.bat)
 
 > [!WARNING]
 > 本项目需要 **root** 并修改系统蓝牙配置，属于非官方用法，使用风险自负。已在 **OnePlus 16（`PYB110_17.0.1.201`）+ Enco X4** 上验证，其他机型/固件版本未测试，类名与行为可能不同。脚本不修改任何系统 APK，可随时撤销。
@@ -28,6 +29,8 @@ X4 向手机上报“支持 LE Audio 共存”，系统因此将其按 **BR/EDR 
 
 ## 用法
 
+### Linux / macOS
+
 ```bash
 chmod +x x4lc3.sh
 
@@ -42,12 +45,28 @@ chmod +x x4lc3.sh
 ./x4lc3.sh status                  # 游戏态与最近的活动设备切换
 ```
 
+### Windows (PowerShell / CMD)
+
+可以直接使用 `x4lc3.bat`（自动绕过 PowerShell 执行策略限制）或在 PowerShell 中运行 `.\x4lc3.ps1`：
+
+```powershell
+.\x4lc3.bat list                    # 查看自定义白名单与当前状态
+.\x4lc3.bat add com.example.game    # 添加应用（可多个），并重启蓝牙
+.\x4lc3.bat del com.example.game    # 删除应用，并重启蓝牙
+.\x4lc3.bat clear                   # 清空自定义白名单
+.\x4lc3.bat restart                 # 仅重启蓝牙
+
+.\x4lc3.bat on [包名]               # 开启常驻游戏态（全局 LC3）
+.\x4lc3.bat off                     # 关闭，切回 LHDC / A2DP
+.\x4lc3.bat status                  # 游戏态与最近的活动设备切换
+```
+
 环境变量：
 
-| 变量 | 作用 |
-|---|---|
-| `ADB=/path/to/adb` | 指定 adb（默认从 PATH 查找） |
-| `NO_RESTART=1` | `add` / `del` / `clear` 后不自动重启蓝牙 |
+| 变量 | Linux / macOS 示例 | Windows (PowerShell) 示例 | 作用 |
+|---|---|---|---|
+| `ADB` | `ADB=/path/to/adb` | `$env:ADB='C:\path\to\adb.exe'` | 指定 adb（默认从 PATH 查找） |
+| `NO_RESTART` | `NO_RESTART=1` | `$env:NO_RESTART='1'` | `add` / `del` / `clear` 后不自动重启蓝牙 |
 
 ### 典型流程
 
@@ -74,7 +93,8 @@ chmod +x x4lc3.sh
 | 文件 | 说明 |
 |---|---|
 | `BLUETOOTH.md` | 机制分析、方案对比、实测结果 |
-| `x4lc3.sh` | 白名单与游戏态管理脚本 |
+| `x4lc3.sh` | 白名单与游戏态管理脚本（Linux / macOS） |
+| `x4lc3.ps1` / `x4lc3.bat` | 白名单与游戏态管理脚本（Windows PowerShell / CMD） |
 
 ## 免责声明
 
