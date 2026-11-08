@@ -1,6 +1,6 @@
 # OPPO Enco X4 × OnePlus：自定义 LC3 / LE Audio 白名单
 
-在 OnePlus（ColorOS / OxygenOS）手机上，OPPO Enco X3 可以全局使用 LC3 / LE Audio，而 Enco X4 被限制为**仅在白名单游戏运行时**才切到 LC3。本项目分析了该限制的实现，并提供一个脚本，用来自定义白名单、随时手动切换 LC3。
+在 OnePlus（ColorOS 17）手机上，OPPO Enco X3 可以全局使用 LC3 / LE Audio，而 Enco X4 被限制为**仅在白名单游戏运行时**才切到 LC3。本项目分析了该限制的实现，并提供一个脚本，用来自定义白名单、随时手动切换 LC3。
 
 - 原理分析与实测记录：[BLUETOOTH.md](BLUETOOTH.md)
 - 管理脚本：[x4lc3.sh](x4lc3.sh)
