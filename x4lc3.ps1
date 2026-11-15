@@ -1,5 +1,5 @@
-# x4lc3.ps1 — 管理一加 16 上 Enco X4 的双模 LC3 白名单与“常驻游戏态” (Windows PowerShell)
-# 原理与验证见 BLUETOOTH.md（方案 B / C）。白名单管理需 root（su），游戏态切换无需 root。
+# x4lc3.ps1 — 管理一加（OnePlus 16 / OnePlus Pad 3 等 ColorOS / OxygenOS 17）上 Enco X4 的双模 LC3 白名单与“常驻游戏态” (Windows PowerShell)
+# 原理与验证见 BLUETOOTH.md（方案 B / C）。白名单与耳机端开关同步需 root（su），游戏态与偏好写入无需 root。
 $ErrorActionPreference = 'Stop'
 
 $CONF = "/data/misc/bluedroid/bt_oplus_iot_list.conf"
@@ -137,12 +137,41 @@ function Set-Whitelist([string[]]$Packages) {
     Write-Host "白名单: $joined"
 }
 
+function Enable-DualConnPref {
+    $appOut = Invoke-AdbShell "content query --uri content://com.oplus.appplatform.settings/global"
+    if ($appOut) {
+        $keys = [regex]::Matches($appOut, 'name=(oplus_lea_dual_connection_preference_[0-9a-fA-F]+)') |
+            ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique
+        foreach ($k in $keys) {
+            $null = Invoke-AdbShell "content call --uri content://com.oplus.appplatform.settings/global --method PUT_global --arg $k --extra value:s:1"
+        }
+    }
+    if (Test-HasRoot) {
+        $xml = Invoke-RootShell "cat /data/user_de/0/com.android.bluetooth/shared_prefs/dual_mode_support.xml 2>/dev/null || true"
+        if ($xml) {
+            $macs = [regex]::Matches($xml, 'name="([0-9A-Fa-f:]{17})" value="true"') |
+                ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique
+            foreach ($mac in $macs) {
+                $shaOut = Invoke-RootShell "printf %s $mac | sha256sum"
+                if ($shaOut) {
+                    $hash = ($shaOut.Trim() -split '\s+')[0]
+                    if ($hash) {
+                        $null = Invoke-AdbShell "content call --uri content://com.oplus.appplatform.settings/global --method PUT_global --arg oplus_lea_dual_connection_preference_$hash --extra value:s:1"
+                    }
+                }
+                $null = Invoke-RootShell "am startservice -n com.oplus.melody/com.oplus.melody.btsdk.manager.service.BluetoothService -a com.oplus.melody.btsdk.action.BLUETOOTH_SERVICE --ei param_id 1104 --es param_address $mac --ei param_value 1 >/dev/null 2>&1 || true"
+            }
+        }
+    }
+}
+
 function Restart-Bt {
     Write-Host "重启蓝牙…"
     $null = Invoke-RootShell "svc bluetooth disable"
     Start-Sleep -Seconds 4
     $null = Invoke-RootShell "svc bluetooth enable"
     Start-Sleep -Seconds 10
+    Enable-DualConnPref
     Write-Host "完成（耳机重连后生效）"
 }
 
@@ -165,9 +194,17 @@ function Show-Status {
     $pkg = Invoke-AdbShell "settings get global debug_gamemode_savegame"
     $pref = Invoke-AdbShell "settings get global oplus_games_low_latency_state"
     $coex = Invoke-AdbShell "getprop persist.sys.bt.leacoexist"
+    $wl = Invoke-AdbShell "getprop persist.sys.oplus.bt.le_audio_white_list_enable"
     Write-Host "游戏态: value=$val, package=$pkg, user_prefer=$pref"
-    Write-Host "共存开关 persist.sys.bt.leacoexist=$coex"
-    Write-Host "最近的活动设备切换:"
+    Write-Host "共存开关: persist.sys.bt.leacoexist=$coex, le_audio_white_list_enable=$wl"
+    Write-Host "双连接偏好 (AppSettings.Global):"
+    $appOut = Invoke-AdbShell "content query --uri content://com.oplus.appplatform.settings/global"
+    if ($appOut) {
+        $rows = [regex]::Matches($appOut, 'name=(oplus_lea_dual_connection_preference_[^,\r\n]+), value=([^\r\n]+)')
+        foreach ($r in $rows) {
+            Write-Host ("  " + $r.Groups[1].Value + "=" + $r.Groups[2].Value.Trim())
+        }
+    }
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
@@ -175,8 +212,16 @@ function Show-Status {
     } finally {
         $ErrorActionPreference = $prev
     }
+    Write-Host "当前活动设备与 LE Audio 连接数:"
     if ($dump) {
-        $matches = $dump | Select-String -Pattern "Active Device Changed" | Select-Object -Last 4
+        $active = $dump | Select-String -Pattern "mA2dpActiveDevice:|mHfpActiveDevice:|mLeAudioActiveDevice:|mLeAudioConnectedDeviceNum:"
+        foreach ($m in $active) {
+            Write-Host ("  " + $m.Line.Trim())
+        }
+    }
+    Write-Host "最近的活动设备切换:"
+    if ($dump) {
+        $matches = $dump | Select-String -Pattern "Active Device Changed|handle.*ActiveDeviceChanged" | Select-Object -Last 4
         foreach ($m in $matches) {
             Write-Host ("  " + $m.Line.Trim())
         }
@@ -240,10 +285,24 @@ function Enable-GameMode([string]$Pkg) {
     if (-not (Test-PackageInstalled $Pkg)) {
         Write-Host "警告: $Pkg 未安装，需至少安装一个白名单应用才会启用双连接" -ForegroundColor Yellow
     }
+    Enable-DualConnPref
+    $leaLine = Invoke-AdbShell "dumpsys bluetooth_manager | grep -m1 'mLeAudioConnectedDeviceNum:'"
+    $leaNum = "0"
+    if ($leaLine -match 'mLeAudioConnectedDeviceNum:\s*(\d+)') {
+        $leaNum = $Matches[1]
+    }
+    if ($leaNum -eq "0") {
+        Start-Sleep -Seconds 3
+    }
     $null = Invoke-AdbShell "settings put global debug_gamemode_savegame $Pkg"
     $prop = Invoke-AdbShell "getprop ro.oplus.audio.support.low_latency_game"
     if ($prop -eq "true") {
         $null = Invoke-AdbShell "settings put global oplus_games_low_latency_state ${Pkg}:1"
+    }
+    $curVal = Invoke-AdbShell "settings get global debug_gamemode_value"
+    if ($curVal -eq "1") {
+        $null = Invoke-AdbShell "settings put global debug_gamemode_value 0"
+        Start-Sleep -Seconds 1
     }
     $null = Invoke-AdbShell "settings put global debug_gamemode_value 1"
     Write-Host "已开启常驻游戏态: $Pkg"
@@ -251,7 +310,7 @@ function Enable-GameMode([string]$Pkg) {
 
 function Disable-GameMode {
     $null = Invoke-AdbShell "settings put global debug_gamemode_value 0"
-    Write-Host "已关闭常驻游戏态"
+    Write-Host "已关闭常驻游戏态（约 4.5~6 秒后自动切回 A2DP / LHDC）"
 }
 
 if ($args.Count -lt 1) { Show-Usage; exit 1 }

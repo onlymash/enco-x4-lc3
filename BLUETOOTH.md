@@ -1,10 +1,10 @@
-# OnePlus 16 上 OPPO Enco X4 的 LC3 / LE Audio 限制机制分析
+# OnePlus（ColorOS / OxygenOS 17）上 OPPO Enco X4 的 LC3 / LE Audio 限制机制分析
 
 | 项目 | 内容 |
 |---|---|
-| 设备 / 固件 | 一加 16 `PYB110_17.0.1.201`（已 root） |
+| 已验证设备 / 固件 | 一加 16 `PYB110_17.0.1.201`（国行，已 root）；一加平板 3 `OPD2415_17.0.0.103(EX01)`（海外版 IN，已 root） |
 | 分析对象 | `Bluetooth.apk`、`oplus_bluetooth_common_ext.jar`、`com.oplus.melody`（使用 jadx 反编译） |
-| 文档状态 | 已对照反编译源码复核，并在设备上实测方案 A、B/C（见第 6 节） |
+| 文档状态 | 已对照反编译源码复核，并在 OnePlus 16 与 OnePlus Pad 3（海外版）上实测通过 |
 
 > 下文中的类路径均相对于 `oplus_bluetooth_common_ext.jar` 中的 `com/oplus/bluetooth/`，除非另注明。类名与行为来自该固件版本，其他版本可能不同。
 
@@ -13,9 +13,10 @@
 1. X3 与 X4 的区别不在白名单，而在耳机上报的 **“LE Audio 共存（Coexistence）”特性位**：X4 支持，系统将其按 **BR/EDR + LE Audio 双模共存** 处理，X3 按 **纯 LE Audio 单模** 处理。
 2. 双模共存时，LE Audio 仅在 **“游戏低延迟模式” 且前台包名在双模白名单内** 时被激活，其余时间保持 A2DP/HFP。
 3. 双模白名单 = 系统硬编码列表 ± 云控 `add_list` / `delete_list`，云控落地文件为 `/data/misc/bluedroid/bt_oplus_iot_list.conf`。
-4. 实测结果：
+4. **双连接偏好与耳机端同步**：双连接偏好开关 `oplus_lea_dual_connection_preference_<MAC的SHA-256>` 存储在 Oplus **`AppSettings.Global`**（`content://com.oplus.appplatform.settings/global`），而非标准 `Settings.Global`；且每次连接时耳机会通过 O-Echo `0x1d` 上报自身记录的开关状态，若耳机端为关会反手将 `AppSettings.Global` 重置为 `0` 并禁用 LE Audio。需配合 `com.oplus.melody` SPP 指令 `1075`（`BluetoothService` `param_id=1104`）同步开启耳机端状态。
+5. 实测结果：
    - **方案 B（自定义白名单）**：✅ 已验证。把原神加入 `add_list` 后，打开原神自动切换到 LC3。
-   - **方案 C（伪造游戏态）**：✅ 已验证。设置 `debug_gamemode_*` 后 LE Audio 成为活动设备，A2DP/HFP 被清空。
+   - **方案 C（伪造游戏态）**：✅ 已验证（已在 OnePlus 16 与 OnePlus Pad 3 海外版上验证）。同步开启 `AppSettings.Global` 偏好、`ro.oplus.audio.support.low_latency_game`（需 `<包名>:1`）与 `debug_gamemode_*` 后，LE Audio 成为活动设备，音频流走 `AUDIO_FORMAT_LC3`，A2DP/HFP 活动设备清空。
    - **方案 A（关闭共存开关）**：❌ 失败，不可行（见“方案 A”一节）。
 
 ## 2. X3 与 X4 的区分机制
@@ -89,6 +90,32 @@ DUAL_MODE_ACCEPT_LIST_DOMESTIC ∪ DUAL_MODE_ACCEPT_LIST_OVERSEAS
 - 解析器 `feature/common/OplusBluetoothConfigParser`：INI 风格，`[section]` + `key=value`，`#` 为注释；**每个键值行 `split("=")` 必须恰好得到 2 段**（值中不能含 `=`）。
 - 设备 ROM Update 数据库（`rom_update.db`）中**没有** `sys_bt_iot_config_list` 条目，与“该文件当前不存在”一致（设备上的文件是否存在需实测确认）。
 
+### 3.4 双连接偏好（`AppSettings.Global`）与耳机端 O-Echo `0x1d` / SPP `1075` 同步机制
+
+在一加平板 3 海外版（`OPD2415_17.0.0.103(EX01)`）上的反编译对比与实测确认：
+
+1. **系统支持与机制完全一致**：`op16` 与 `pad3` 的 `OplusDualModeManagerImpl`、`OplusDualModeHelper`、`OplusDualConnectionPreferenceManager`、`BluetoothLowLatencyService` 源码一致；Pad 3 `/my_product/build.prop` 已预置 `persist.sys.bt.leacoexist=true`、`persist.sys.oplus.bt.le_audio=true`、`persist.sys.oplus.bt.le_audio_white_list_enable=true`、`persist.sys.oplus.bt.le_audio_over_spp=true`，并非海外版精简了双模机制。
+2. **两套 Global Settings 易混淆**：
+   - `debug_gamemode_value`、`debug_gamemode_savegame`、`oplus_games_low_latency_state` 由 `OplusBluetoothScenarioMonitor` / `BluetoothLowLatencyService` 从 Android 标准 **`Settings.Global`**（`content://settings/global`）读取。
+   - 双连接偏好 `oplus_lea_dual_connection_preference_<MAC的SHA-256>` 则由 `OplusDualConnectionPreferenceManager` 与 `com.oplus.melody`（`Vb.a` / `S.java`）从 Oplus **`AppSettings.Global`**（`content://com.oplus.appplatform.settings/global`）读取。**仅把该键写入 `Settings.Global` 无效**。
+   - 在 root (`su`) 下直接对 `content://com.oplus.appplatform.settings/global` 执行 `content insert` 会因签名校验失败触发 `SecurityException: Permission denial: signature is not match in root while writing to system settings`；而改用 `content call --method GET_global` / `PUT_global` 无需 root 即可正常读写（注意 `content call --extra value:s:...` 不接受含冒号 `:` 的值，但偏好键仅需写 `0`/`1`）。
+3. **耳机端 O-Echo `0x1d` 上报会反向关闭手机偏好与 LE Audio**：
+   - 仅配置白名单或仅改手机设置时，若耳机端内部记录的开关仍为关闭，每次 BR/EDR 连接握手后耳机会主动上发 O-Echo 指令（`Preamble = 0x79a, cmd_code=0x1, sub_cmd_code=0x1d` → `echo_remote_request_callback` → `OplusBluetoothSmartAudioServer.onEarbudsGameLowLatencyRequest(enable=false)` → `OplusDualModeManagerImpl.handleEarbudsGameLowLatencyRequest`）。
+   - 该回调随后会调用 `mPreferenceManager.setPreference(device, false)` 把 `AppSettings.Global` 写回 `0`，并执行 `SetEnableState: ... disabled`，将耳机所在 Group 移出后台连接，导致 `LeAudioService` 断开且无法激活 LC3。
+4. **通过 SPP `1075`（`param_id=1104`）同步开启耳机端状态**：
+   - 欢律（`com.oplus.melody`）`GameSetFragment` 通过 `BluetoothService`（`case 1104` → `HeadsetCoreService.Z0`）发送 SPP 指令 `1075`（载荷 `[1]`）把开关闭合状态写入耳机持久存储；实测同步后即使重启蓝牙重连，耳机也不再发送 `0x1d` 关闭请求，`LeAudioService` 自动保持双耳已连接（`mLeAudioConnectedDeviceNum: 2`）。
+   - 手动修复命令（`am startservice` 需 root，`content call` 无需 root）：
+
+```bash
+# 1. 通知欢律通过 SPP 1075 开启耳机端共存开关（需 root，替换为你设备的 X4 主耳 MAC）
+adb shell "su -c 'am startservice -n com.oplus.melody/com.oplus.melody.btsdk.manager.service.BluetoothService -a com.oplus.melody.btsdk.action.BLUETOOTH_SERVICE --ei param_id 1104 --es param_address E4:98:E0:4B:28:55 --ei param_value 1'"
+
+# 2. 写入 AppSettings.Global 双连接偏好（hash 为 MAC 大写字符串的 SHA-256，无需 root）
+adb shell "content call --uri content://com.oplus.appplatform.settings/global --method PUT_global --arg oplus_lea_dual_connection_preference_<MAC_SHA256> --extra value:s:1"
+```
+
+5. **LC3 退出延迟**：`BluetoothLowLatencyService` 定义了 `LC3_COEX_MAX_EXIT_DELAY_MS = 4500`，关闭 `debug_gamemode_value=0` 后需等待约 4.5~6 秒才会从 `ble_headset` 切回 A2DP（LHDC）。
+
 ## 4. 可行方案
 
 > 命令均需在已连接设备的电脑上执行（`adb shell su -c '...'`）。以下均为**依据源码的推演，未在设备上验证**。
@@ -156,7 +183,10 @@ adb shell settings put global debug_gamemode_value 0
 ## 5. 验证状态
 
 - 2026-11-08 在 OnePlus 16 + Enco X4 上实测：方案 A 失败；方案 B、C 成功（B 以真实打开原神验证，C 以设置 `debug_gamemode_*` 验证）。
-- 设备上当前保留的改动：`/data/misc/bluedroid/bt_oplus_iot_list.conf`（`add_list=com.miHoYo.GenshinImpact`）。备份位于设备 `/data/local/tmp/btbak/`。
-- 撤销：删除上述 conf 并重启蓝牙；若用过方案 C，执行 `settings put global debug_gamemode_value 0`。
+- 2026-11-15 在一加平板 3 海外版（`OPD2415_17.0.0.103(EX01)`，ColorOS / OxygenOS 17）+ Enco X4 上实测：
+  - 发送 `BluetoothService` `param_id=1104`（SPP `1075=1`）并写入 `AppSettings.Global` 偏好为 `1` 后，`LeAudioService` 双耳成功建立连接（`Group 1` `isConnected: true`，`mLeAudioConnectedDeviceNum: 2`）；且执行 `svc bluetooth disable/enable` 重启蓝牙后耳机持久保留该状态并自动重连 LE Audio。
+  - 配置 `Settings.Global` 中 `debug_gamemode_savegame=com.miHoYo.GenshinImpact`、`oplus_games_low_latency_state=com.miHoYo.GenshinImpact:1`、`debug_gamemode_value=1` 后，`dumpsys bluetooth_manager` 显示 `mGameMode: true`、`mUserPreferLLMode: true`、`mLeAudioActiveDevice: XX:XX:XX:XX:28:55`（A2DP/HFP 置为 `null`），`dumpsys audio` 显示输出设备为 `ble_headset`（`codec=AUDIO_FORMAT_LC3`）。
+  - 执行 `debug_gamemode_value=0` 后约 6 秒（`LC3_COEX_MAX_EXIT_DELAY_MS`），自动恢复 A2DP（`AUDIO_FORMAT_LHDC`），`mLeAudioActiveDevice` 回到 `null`。
+- `x4lc3.sh` / `x4lc3.ps1` 已集成上述 `AppSettings.Global` 偏好写入、`BluetoothService` `param_id=1104` 耳机端同步以及详细状态检查。
 - 以上改动不涉及系统 APK 修改，系统 OTA 或 ROM Update 重新下发 `sys_bt_iot_config_list` 后可能需要重做。
-- 排查可用：`adb logcat | grep -E "OplusDualModeHelper|isDualConnectionNeeded|oplusHandleLeaConnected|BluetoothLowLatency"`，以及 `dumpsys bluetooth_manager` 中 `BluetoothActiveDeviceManager event log`。
+- 排查可用：`adb logcat | grep -E "OplusDualModeHelper|isDualConnectionNeeded|oplusHandleLeaConnected|BluetoothLowLatency|onEarbudsGameLowLatencyRequest"`，以及 `dumpsys bluetooth_manager` 中 `ActiveDeviceManager` / `LeAudioService`、`content query --uri content://com.oplus.appplatform.settings/global`。

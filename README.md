@@ -7,11 +7,11 @@
 - 管理脚本（Windows）：[x4lc3.ps1](x4lc3.ps1) / [x4lc3.bat](x4lc3.bat)
 
 > [!WARNING]
-> 本项目修改系统设置或蓝牙配置，属于非官方用法，使用风险自负。已在 **OnePlus 16（`PYB110_17.0.1.201`）+ Enco X4** 上验证，其他机型/固件版本未测试，类名与行为可能不同。脚本不修改任何系统 APK，可随时撤销。
+> 本项目修改系统设置或蓝牙配置，属于非官方用法，使用风险自负。已在 **OnePlus 16（`PYB110_17.0.1.201`）+ Enco X4** 与 **OnePlus Pad 3 海外版（`OPD2415_17.0.0.103(EX01)`）+ Enco X4** 上验证，其他机型/固件版本未测试，类名与行为可能不同。脚本不修改任何系统 APK，可随时撤销。
 
 ## 原理简述
 
-X4 向手机上报“支持 LE Audio 共存”，系统因此将其按 **BR/EDR + LE Audio 双模** 处理：平时保持 A2DP（LHDC/AAC），仅当“游戏模式 + 前台包名在双模白名单”同时满足时才激活 LC3。白名单由系统内置列表加云控文件 `/data/misc/bluedroid/bt_oplus_iot_list.conf` 组成，蓝牙启动时读取。本项目向该文件追加自定义包名，并可手动设置游戏态让 LC3 常驻。详见 [BLUETOOTH.md](BLUETOOTH.md)。
+X4 向手机上报“支持 LE Audio 共存”，系统因此将其按 **BR/EDR + LE Audio 双模** 处理：平时保持 A2DP（LHDC/AAC），仅当“双连接偏好为开 + 游戏模式 + 前台包名在双模白名单”同时满足时才激活 LC3。白名单由系统内置列表加云控文件 `/data/misc/bluedroid/bt_oplus_iot_list.conf` 组成，蓝牙启动时读取；此外双连接偏好位于 Oplus `AppSettings.Global`（`content://com.oplus.appplatform.settings/global`），且耳机会通过 O-Echo `0x1d` 同步自身的开关状态。本项目向白名单文件追加自定义包名，自动启用 `AppSettings.Global` 偏好与（在 root 时）同步耳机端共存开关，并可手动设置游戏态让 LC3 常驻。详见 [BLUETOOTH.md](BLUETOOTH.md)。
 
 已验证结论：
 
@@ -27,8 +27,8 @@ X4 向手机上报“支持 LE Audio 共存”，系统因此将其按 **BR/EDR 
 - 电脑上有 `adb`（Android platform-tools）。脚本按以下顺序查找：环境变量 `ADB` → `PATH` → `$ANDROID_HOME` / `$ANDROID_SDK_ROOT` 下的 `platform-tools`。找不到会报错退出。
 - 设备上**至少安装一个白名单应用**（系统内置白名单或自定义白名单），否则系统不会建立 LE Audio 双连接。
 - **Root 权限要求**：
-  - **不需要 root**：`on <包名>`（显式指定包名开启常驻游戏态）、`off`（关闭常驻游戏态）、`status`（查看当前状态）。若设备上已安装系统内置白名单中的游戏（如王者荣耀 `com.tencent.tmgp.sgame`、和平精英 `com.tencent.tmgp.pubgmhd` 等，完整列表见 [BLUETOOTH.md](BLUETOOTH.md) 第 3.2 节），无需 root 即可直接使用 `on <包名>` / `off` 切换全局 LC3。
-  - **需要 root（`su`）**：`list`、`add`、`del`、`clear`、`restart`，以及省略包名的 `on`（因为读写 `/data/misc/bluedroid/bt_oplus_iot_list.conf` 与重启蓝牙需要 root 权限）。
+  - **不需要 root**：`on <包名>`（显式指定包名开启常驻游戏态，同时通过 `content call` 将已有 `AppSettings.Global` 双连接偏好置为 `1`）、`off`（关闭常驻游戏态）、`status`（查看当前状态）。若设备上已安装系统内置白名单中的游戏（如王者荣耀 `com.tencent.tmgp.sgame`、和平精英 `com.tencent.tmgp.pubgmhd` 等，完整列表见 [BLUETOOTH.md](BLUETOOTH.md) 第 3.2 节）且耳机端共存开关已同步打开，无需 root 即可直接使用 `on <包名>` / `off` 切换全局 LC3。
+  - **需要 root（`su`）**：`list`、`add`、`del`、`clear`、`restart`，省略包名的 `on`，以及在 `on` / `restart` 时通过 `com.oplus.melody`（`BluetoothService` `param_id=1104` / SPP `1075`）同步开启耳机端双模开关（读写 `/data/misc/bluedroid/bt_oplus_iot_list.conf` 与重启蓝牙同样需要 root 权限）。
 
 ## 用法
 
@@ -96,8 +96,10 @@ chmod +x x4lc3.sh
 ### 注意事项
 
 - 白名单只在蓝牙启动时读取，所以修改后必须重启蓝牙（脚本默认会做），耳机会短暂断开。
+- **海外版 / 新配对设备注意**：部分设备未曾在欢律 App 内开启游戏低延迟开关，或仅写过 `Settings.Global` 而未写 `AppSettings.Global` 时，耳机会上报 O-Echo `0x1d` 关闭 LE Audio。在 root 环境下运行一次 `./x4lc3.sh on [包名]` 或 `./x4lc3.sh restart`，脚本会自动写入 `AppSettings.Global` 并触发欢律 SPP `1075` 同步开启耳机端开关（仅首次需要，之后耳机断连重连会自动记住）。
 - 自动切换依赖系统“游戏助手”把应用识别为游戏；常驻游戏态（`on`）不依赖它，但游戏助手、系统重启可能重置相关设置，需重新执行。
-- `on` 会写入 `debug_gamemode_value` / `debug_gamemode_savegame`，可能触发游戏模式下的其他系统行为（性能策略、通知等）。
+- `off` 关闭游戏态后，由于蓝牙低延迟服务的 `LC3_COEX_MAX_EXIT_DELAY_MS` 退出延迟，需约 4.5~6 秒才会从 LC3 切回 A2DP（LHDC/AAC）。
+- `on` 会写入 `debug_gamemode_value` / `debug_gamemode_savegame`（以及启用 `ro.oplus.audio.support.low_latency_game` 机型上的 `oplus_games_low_latency_state`），可能触发游戏模式下的其他系统行为（性能策略、通知等）。
 - ROM Update 重新下发云控配置（`sys_bt_iot_config_list`）或系统 OTA 后，自定义文件可能被覆盖，需要重新添加。
 - 撤销全部改动：`./x4lc3.sh clear`，并执行 `./x4lc3.sh off`。
 
